@@ -3,7 +3,7 @@ Please ensure that your Google Drive API is configured correctly to address issu
 
 # TypingMind Cloud Backup Extension
 
-[If you found this useful, please consider buying me a coffee](https://buymeacoffee.com/itcon):heart:!
+[If you found this useful, please consider buying me a coffee](https://buymeacoffee.com/mvfolino68):heart:!
 
 ## Features
 - Extension to enable automatic backup & restore of app data to Google Drive. (Full backup, not incremental)
