@@ -1,3 +1,4 @@
+// Global variables and constants
 let backupIntervalRunning = false;
 let wasImportSuccessful = false;
 let isExportInProgress = false;
@@ -21,8 +22,22 @@ const DISCOVERY_DOC =
 // Authorization scopes required by the API
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
-// Load required libraries
+// Utility functions
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
+// Library loading functions
 async function loadDexie() {
+  if (typeof Dexie !== 'undefined') return;
   await new Promise((resolve) => {
     const script = document.createElement("script");
     script.src = "https://unpkg.com/dexie@latest/dist/dexie.js";
@@ -32,6 +47,7 @@ async function loadDexie() {
 }
 
 async function loadJSZip() {
+  if (typeof JSZip !== 'undefined') return;
   await new Promise((resolve) => {
     const script = document.createElement("script");
     script.src =
@@ -43,41 +59,46 @@ async function loadJSZip() {
 
 async function loadGoogleAuth() {
   // Load Google API Client
-  await new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://apis.google.com/js/api.js";
-    script.onload = () => {
-      gapi.load("client", async () => {
-        try {
-          await gapi.client.init({
-            discoveryDocs: [DISCOVERY_DOC],
-          });
-          resolve();
-        } catch (err) {
-          reject(err);
-        }
-      });
-    };
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
+  if (typeof gapi === 'undefined') {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://apis.google.com/js/api.js";
+      script.onload = () => {
+        gapi.load("client", async () => {
+          try {
+            await gapi.client.init({
+              discoveryDocs: [DISCOVERY_DOC],
+            });
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      };
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
 
   // Load Google Identity Services
-  await new Promise((resolve) => {
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.onload = () => {
-      tokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES,
-        callback: "", // defined later
-      });
-      resolve();
-    };
-    document.head.appendChild(script);
-  });
+  if (typeof google === 'undefined') {
+    await new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = "https://accounts.google.com/gsi/client";
+      script.onload = () => {
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          callback: "", // defined later
+        });
+        resolve();
+      };
+      document.head.appendChild(script);
+    });
+  }
 }
 
+// Authentication functions
 async function authenticate() {
   return new Promise((resolve, reject) => {
     try {
@@ -107,6 +128,7 @@ async function authenticate() {
   });
 }
 
+// Google Drive operations
 async function setupBackupFolder() {
   try {
     await authenticate();
@@ -140,59 +162,53 @@ async function setupBackupFolder() {
   }
 }
 
-// Create a new button
-const cloudSyncBtn = document.createElement("button");
-cloudSyncBtn.setAttribute("data-element-id", "cloud-sync-button");
-cloudSyncBtn.className =
-  "cursor-default group flex items-center justify-center p-1 text-sm font-medium flex-col group focus:outline-0 focus:text-white text-white/70";
+// UI initialization
+function createBackupButton() {
+  const cloudSyncBtn = document.createElement("button");
+  cloudSyncBtn.setAttribute("data-element-id", "cloud-sync-button");
+  cloudSyncBtn.className =
+    "cursor-default group flex items-center justify-center p-1 text-sm font-medium flex-col group focus:outline-0 focus:text-white text-white/70";
 
-const cloudIconSVG = `
-<svg class="w-6 h-6 flex-shrink-0" width="24px" height="24px" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-    <path fill-rule="evenodd" clip-rule="evenodd" d="M19 9.76c-.12-3.13-2.68-5.64-5.83-5.64-2.59 0-4.77 1.68-5.53 4.01-.19-.03-.39-.04-.57-.04-2.45 0-4.44 1.99-4.44 4.44 0 2.45 1.99 4.44 4.44 4.44h11.93c2.03 0 3.67-1.64 3.67-3.67 0-1.95-1.52-3.55-3.44-3.65zm-5.83-3.64c2.15 0 3.93 1.6 4.21 3.68l.12.88.88.08c1.12.11 1.99 1.05 1.99 2.19 0 1.21-.99 2.2-2.2 2.2H7.07c-1.64 0-2.97-1.33-2.97-2.97 0-1.64 1.33-2.97 2.97-2.97.36 0 .72.07 1.05.2l.8.32.33-.8c.59-1.39 1.95-2.28 3.45-2.28z" fill="currentColor"></path>
-    <path fill-rule="evenodd" clip-rule="evenodd" d="M12 15.33v-5.33M9.67 12.33L12 14.67l2.33-2.34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
-</svg>
-`;
+  const cloudIconSVG = `
+  <svg class="w-6 h-6 flex-shrink-0" width="24px" height="24px" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M19 9.76c-.12-3.13-2.68-5.64-5.83-5.64-2.59 0-4.77 1.68-5.53 4.01-.19-.03-.39-.04-.57-.04-2.45 0-4.44 1.99-4.44 4.44 0 2.45 1.99 4.44 4.44 4.44h11.93c2.03 0 3.67-1.64 3.67-3.67 0-1.95-1.52-3.55-3.44-3.65zm-5.83-3.64c2.15 0 3.93 1.6 4.21 3.68l.12.88.88.08c1.12.11 1.99 1.05 1.99 2.19 0 1.21-.99 2.2-2.2 2.2H7.07c-1.64 0-2.97-1.33-2.97-2.97 0-1.64 1.33-2.97 2.97-2.97.36 0 .72.07 1.05.2l.8.32.33-.8c.59-1.39 1.95-2.28 3.45-2.28z" fill="currentColor"></path>
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M12 15.33v-5.33M9.67 12.33L12 14.67l2.33-2.34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+  </svg>
+  `;
 
-const textSpan = document.createElement("span");
-textSpan.className =
-  "font-normal self-stretch text-center text-xs leading-4 md:leading-none";
-textSpan.innerText = "Backup";
+  const textSpan = document.createElement("span");
+  textSpan.className =
+    "font-normal self-stretch text-center text-xs leading-4 md:leading-none";
+  textSpan.innerText = "Backup";
 
-const iconSpan = document.createElement("span");
-iconSpan.className =
-  "block group-hover:bg-white/30 w-[35px] h-[35px] transition-all rounded-lg flex items-center justify-center group-hover:text-white/90";
-iconSpan.innerHTML = cloudIconSVG;
+  const iconSpan = document.createElement("span");
+  iconSpan.className =
+    "block group-hover:bg-white/30 w-[35px] h-[35px] transition-all rounded-lg flex items-center justify-center group-hover:text-white/90";
+  iconSpan.innerHTML = cloudIconSVG;
 
-cloudSyncBtn.appendChild(iconSpan);
-cloudSyncBtn.appendChild(textSpan);
+  cloudSyncBtn.appendChild(iconSpan);
+  cloudSyncBtn.appendChild(textSpan);
 
-function insertCloudSyncButton() {
+  // Attach click handler
+  cloudSyncBtn.addEventListener("click", function () {
+    openSyncModal();
+  });
+
+  return cloudSyncBtn;
+}
+
+function insertBackupButton() {
   const teamsButton = document.querySelector(
     '[data-element-id="workspace-tab-teams"]'
   );
 
   if (teamsButton && teamsButton.parentNode) {
+    const cloudSyncBtn = createBackupButton();
     teamsButton.parentNode.insertBefore(cloudSyncBtn, teamsButton.nextSibling);
     return true;
   }
   return false;
 }
-
-const observer = new MutationObserver((mutations) => {
-  if (insertCloudSyncButton()) {
-    observer.disconnect();
-  }
-});
-
-observer.observe(document.body, {
-  childList: true,
-  subtree: true,
-});
-
-// Attach click handler to button
-cloudSyncBtn.addEventListener("click", function () {
-  openSyncModal();
-});
 
 // Modal UI
 function openSyncModal() {
@@ -589,19 +605,6 @@ function startBackupInterval() {
   }
 }
 
-// Helper function for debouncing
-function debounce(func, wait) {
-  let timeout;
-  return function executedFunction(...args) {
-    const later = () => {
-      clearTimeout(timeout);
-      func(...args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
-}
-
 async function exportBackupData() {
   const db = new Dexie("typingmind");
   db.version(1).stores({
@@ -709,3 +712,72 @@ document.addEventListener("visibilitychange", async () => {
     }
   }
 }
+
+// UI initialization
+function createBackupButton() {
+  const cloudSyncBtn = document.createElement("button");
+  cloudSyncBtn.setAttribute("data-element-id", "cloud-sync-button");
+  cloudSyncBtn.className =
+    "cursor-default group flex items-center justify-center p-1 text-sm font-medium flex-col group focus:outline-0 focus:text-white text-white/70";
+
+  const cloudIconSVG = `
+  <svg class="w-6 h-6 flex-shrink-0" width="24px" height="24px" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M19 9.76c-.12-3.13-2.68-5.64-5.83-5.64-2.59 0-4.77 1.68-5.53 4.01-.19-.03-.39-.04-.57-.04-2.45 0-4.44 1.99-4.44 4.44 0 2.45 1.99 4.44 4.44 4.44h11.93c2.03 0 3.67-1.64 3.67-3.67 0-1.95-1.52-3.55-3.44-3.65zm-5.83-3.64c2.15 0 3.93 1.6 4.21 3.68l.12.88.88.08c1.12.11 1.99 1.05 1.99 2.19 0 1.21-.99 2.2-2.2 2.2H7.07c-1.64 0-2.97-1.33-2.97-2.97 0-1.64 1.33-2.97 2.97-2.97.36 0 .72.07 1.05.2l.8.32.33-.8c.59-1.39 1.95-2.28 3.45-2.28z" fill="currentColor"></path>
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M12 15.33v-5.33M9.67 12.33L12 14.67l2.33-2.34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+  </svg>
+  `;
+
+  const textSpan = document.createElement("span");
+  textSpan.className =
+    "font-normal self-stretch text-center text-xs leading-4 md:leading-none";
+  textSpan.innerText = "Backup";
+
+  const iconSpan = document.createElement("span");
+  iconSpan.className =
+    "block group-hover:bg-white/30 w-[35px] h-[35px] transition-all rounded-lg flex items-center justify-center group-hover:text-white/90";
+  iconSpan.innerHTML = cloudIconSVG;
+
+  cloudSyncBtn.appendChild(iconSpan);
+  cloudSyncBtn.appendChild(textSpan);
+
+  // Attach click handler
+  cloudSyncBtn.addEventListener("click", function () {
+    openSyncModal();
+  });
+
+  return cloudSyncBtn;
+}
+
+function insertBackupButton() {
+  const teamsButton = document.querySelector(
+    '[data-element-id="workspace-tab-teams"]'
+  );
+
+  if (teamsButton && teamsButton.parentNode) {
+    const cloudSyncBtn = createBackupButton();
+    teamsButton.parentNode.insertBefore(cloudSyncBtn, teamsButton.nextSibling);
+    return true;
+  }
+  return false;
+}
+
+// Initialize when DOM is ready
+(async function init() {
+  if (document.readyState === "complete") {
+    await handleDOMReady();
+  } else {
+    window.addEventListener("load", handleDOMReady);
+  }
+  
+  // Watch for Teams button to appear
+  const observer = new MutationObserver((mutations) => {
+    if (insertBackupButton()) {
+      observer.disconnect();
+    }
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+})();
