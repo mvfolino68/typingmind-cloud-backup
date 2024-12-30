@@ -577,3 +577,32 @@ document.addEventListener("visibilitychange", async () => {
     }
   }
 });
+
+async function authenticate() {
+  return new Promise((resolve, reject) => {
+    try {
+      tokenClient.callback = async (resp) => {
+        if (resp.error) {
+          console.error("Authentication error:", resp);
+          reject(new Error(`Authentication failed: ${resp.error}`));
+          return;
+        }
+        resolve(resp);
+      };
+      
+      if (gapi.client.getToken() === null) {
+        // First time authentication
+        tokenClient.requestAccessToken({ 
+          prompt: "consent",
+          hint: "Sign in to backup your Typing Mind data to Google Drive"
+        });
+      } else {
+        // Already authenticated before
+        tokenClient.requestAccessToken({ prompt: "" });
+      }
+    } catch (err) {
+      console.error("Error in authenticate():", err);
+      reject(err);
+    }
+  });
+}
