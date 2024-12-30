@@ -21,6 +21,125 @@ const DISCOVERY_DOC =
 // Authorization scopes required by the API
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
+// Load required libraries
+async function loadDexie() {
+  await new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/dexie@latest/dist/dexie.js";
+    script.onload = resolve;
+    document.head.appendChild(script);
+  });
+}
+
+async function loadJSZip() {
+  await new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src =
+      "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js";
+    script.onload = resolve;
+    document.head.appendChild(script);
+  });
+}
+
+async function loadGoogleAuth() {
+  // Load Google API Client
+  await new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://apis.google.com/js/api.js";
+    script.onload = () => {
+      gapi.load("client", async () => {
+        try {
+          await gapi.client.init({
+            discoveryDocs: [DISCOVERY_DOC],
+          });
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      });
+    };
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+
+  // Load Google Identity Services
+  await new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.onload = () => {
+      tokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: "", // defined later
+      });
+      resolve();
+    };
+    document.head.appendChild(script);
+  });
+}
+
+async function authenticate() {
+  return new Promise((resolve, reject) => {
+    try {
+      tokenClient.callback = async (resp) => {
+        if (resp.error) {
+          console.error("Authentication error:", resp);
+          reject(new Error(`Authentication failed: ${resp.error}`));
+          return;
+        }
+        resolve(resp);
+      };
+      
+      if (gapi.client.getToken() === null) {
+        // First time authentication
+        tokenClient.requestAccessToken({ 
+          prompt: "consent",
+          hint: "Sign in to backup your Typing Mind data to Google Drive"
+        });
+      } else {
+        // Already authenticated before
+        tokenClient.requestAccessToken({ prompt: "" });
+      }
+    } catch (err) {
+      console.error("Error in authenticate():", err);
+      reject(err);
+    }
+  });
+}
+
+async function setupBackupFolder() {
+  try {
+    await authenticate();
+
+    // Search for existing backup folder
+    const response = await gapi.client.drive.files.list({
+      q: `name='${BACKUP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      spaces: "drive",
+      fields: "files(id, name)",
+    });
+
+    if (response.result.files.length > 0) {
+      backupFolderId = response.result.files[0].id;
+    } else {
+      // Create new backup folder
+      const folderMetadata = {
+        name: BACKUP_FOLDER_NAME,
+        mimeType: "application/vnd.google-apps.folder",
+      };
+
+      const folder = await gapi.client.drive.files.create({
+        resource: folderMetadata,
+        fields: "id",
+      });
+
+      backupFolderId = folder.result.id;
+    }
+  } catch (err) {
+    console.error("Error setting up backup folder:", err);
+    throw err;
+  }
+}
+
 // Create a new button
 const cloudSyncBtn = document.createElement("button");
 cloudSyncBtn.setAttribute("data-element-id", "cloud-sync-button");
@@ -517,9 +636,20 @@ async function exportBackupData() {
 async function handleDOMReady() {
   window.removeEventListener("load", handleDOMReady);
   try {
-    await Promise.all([loadDexie(), loadJSZip(), loadGoogleAuth()]);
-    await initializeGoogleDrive();
+    // Load all required libraries first
+    console.log("Loading required libraries...");
+    await Promise.all([loadDexie(), loadJSZip()]);
+    
+    // Load Google auth separately since it requires sequential steps
+    console.log("Loading Google Auth...");
+    await loadGoogleAuth();
+    
+    console.log("Setting up backup folder...");
+    await setupBackupFolder();
+    
+    console.log("Checking for existing backups...");
     var importSuccessful = await checkAndImportBackup();
+    
     const storedSuffix = localStorage.getItem("last-daily-backup-in-gdrive");
     const today = new Date();
     const currentDateSuffix = `${today.getFullYear()}${String(
@@ -543,6 +673,8 @@ async function handleDOMReady() {
       startBackupInterval();
       setupStorageMonitoring();
     }
+    
+    console.log("Google Drive backup extension initialized successfully!");
   } catch (err) {
     console.error("Error in handleDOMReady:", err);
   }
@@ -576,33 +708,4 @@ document.addEventListener("visibilitychange", async () => {
       setupStorageMonitoring();
     }
   }
-});
-
-async function authenticate() {
-  return new Promise((resolve, reject) => {
-    try {
-      tokenClient.callback = async (resp) => {
-        if (resp.error) {
-          console.error("Authentication error:", resp);
-          reject(new Error(`Authentication failed: ${resp.error}`));
-          return;
-        }
-        resolve(resp);
-      };
-      
-      if (gapi.client.getToken() === null) {
-        // First time authentication
-        tokenClient.requestAccessToken({ 
-          prompt: "consent",
-          hint: "Sign in to backup your Typing Mind data to Google Drive"
-        });
-      } else {
-        // Already authenticated before
-        tokenClient.requestAccessToken({ prompt: "" });
-      }
-    } catch (err) {
-      console.error("Error in authenticate():", err);
-      reject(err);
-    }
-  });
 }
