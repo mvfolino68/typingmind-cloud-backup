@@ -143,3 +143,230 @@ const interval = setInterval(() => {
   }
   attempts++;
 }, 1000);
+
+function openSyncModal() {
+  var existingModal = document.querySelector(
+    'div[data-element-id="sync-modal-dbbackup"]'
+  );
+  if (existingModal) {
+    return;
+  }
+  var modalPopup = document.createElement("div");
+  modalPopup.style.paddingLeft = "10px";
+  modalPopup.style.paddingRight = "10px";
+  modalPopup.setAttribute("data-element-id", "sync-modal-dbbackup");
+  modalPopup.className =
+    "bg-opacity-75 fixed inset-0 bg-gray-800 transition-all flex items-center justify-center z-[60]";
+  modalPopup.innerHTML = `
+        <div class="inline-block w-full align-bottom bg-white dark:bg-zinc-950 rounded-lg px-4 pb-4 text-left shadow-xl transform transition-all sm:my-8 sm:p-6 sm:align-middle pt-4 overflow-hidden sm:max-w-lg">
+            <div class="text-gray-800 dark:text-white text-left text-sm">
+                <div class="flex justify-center items-center mb-4">
+                    <h3 class="text-center text-xl font-bold">Google Drive Backup & Sync</h3>
+                    <div class="relative group ml-2">
+                        <span class="cursor-pointer" id="info-icon" style="color: white">ℹ</span>
+                        <div id="tooltip" style="display:none; width: 250px; margin-top: 0.5em;" class="z-1 absolute -top-8 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs rounded-md px-2 py-1 opacity-90 transition-opacity duration-300 opacity-0 transition-opacity">
+                            Click "Connect to Google Drive" to authorize the app. Once connected, your data will be automatically backed up to Google Drive every minute when the browser tab is active.<br/><br/>
+                            Restore backup: If a backup exists in Google Drive, it will be automatically restored when you load the app.<br/><br/>
+                            Manual Backup & Restore: Use the "Backup Now" and "Restore" buttons for manual operations.<br/><br/>
+                            Snapshot: Creates an instant backup that won't be overwritten.<br/><br/>
+                            Download: Select a backup file and click Download to save it locally.<br/><br/>
+                            You can revoke access anytime through your Google Account settings.
+                        </div>
+                    </div>
+                </div>
+                <div class="space-y-4">
+                    <div id="auth-status" class="text-center mb-4">
+                        <button id="auth-button" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                            Connect to Google Drive
+                        </button>
+                    </div>
+                    <div class="mt-6 bg-gray-100 px-3 py-3 rounded-lg border border-gray-200 dark:bg-zinc-800 dark:border-gray-600">
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Available Backups</label>
+                            <button id="refresh-backups-btn" class="text-sm text-blue-600 hover:text-blue-800 disabled:opacity-50">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="w-full">
+                                <select id="backup-files" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm dark:bg-zinc-700">
+                                    <option value="">Please connect to Google Drive first</option>
+                                </select>
+                            </div>
+                            <div class="flex justify-end space-x-2">
+                                <button id="backup-now-btn" class="z-1 px-3 py-2 text-sm text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                                    Backup Now
+                                </button>
+                                <button id="snapshot-btn" class="z-1 px-3 py-2 text-sm text-white bg-purple-600 rounded-md hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                                    Snapshot
+                                </button>
+                                <button id="download-backup-btn" class="z-1 px-3 py-2 text-sm text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                                    Download
+                                </button>
+                                <button id="restore-backup-btn" class="z-1 px-3 py-2 text-sm text-white bg-yellow-600 rounded-md hover:bg-yellow-700 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                                    Restore
+                                </button>
+                                <button id="delete-backup-btn" class="z-1 px-3 py-2 text-sm text-white bg-red-600 rounded-md hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="status-message" class="mt-4 text-sm text-center"></div>
+                </div>
+            </div>
+            <div class="mt-4 flex justify-end">
+                <button id="close-modal-btn" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">Close</button>
+            </div>
+        </div>
+    `;
+
+  document.body.appendChild(modalPopup);
+
+  // Setup event listeners
+  const authButton = document.getElementById("auth-button");
+  const refreshButton = document.getElementById("refresh-backups-btn");
+  const backupNowButton = document.getElementById("backup-now-btn");
+  const snapshotButton = document.getElementById("snapshot-btn");
+  const downloadButton = document.getElementById("download-backup-btn");
+  const restoreButton = document.getElementById("restore-backup-btn");
+  const deleteButton = document.getElementById("delete-backup-btn");
+  const closeButton = document.getElementById("close-modal-btn");
+  const backupSelect = document.getElementById("backup-files");
+  const statusMessage = document.getElementById("status-message");
+  const infoIcon = document.getElementById("info-icon");
+  const tooltip = document.getElementById("tooltip");
+
+  // Info tooltip
+  infoIcon.addEventListener("mouseenter", () => {
+    tooltip.style.display = "block";
+    setTimeout(() => (tooltip.style.opacity = "1"), 0);
+  });
+  infoIcon.addEventListener("mouseleave", () => {
+    tooltip.style.opacity = "0";
+    setTimeout(() => (tooltip.style.display = "none"), 300);
+  });
+
+  // Auth button
+  authButton.addEventListener("click", async () => {
+    try {
+      await authenticate();
+      updateAuthStatus(true);
+      await loadBackupFiles();
+    } catch (err) {
+      console.error("Authentication failed:", err);
+      statusMessage.textContent = "Authentication failed. Please try again.";
+      statusMessage.style.color = "red";
+    }
+  });
+
+  // Refresh button
+  refreshButton.addEventListener("click", async () => {
+    await loadBackupFiles();
+  });
+
+  // Backup now button
+  backupNowButton.addEventListener("click", async () => {
+    try {
+      statusMessage.textContent = "Backing up...";
+      const data = await exportBackupData();
+      await backupToGDrive(data);
+      statusMessage.textContent = "Backup completed successfully!";
+      statusMessage.style.color = "green";
+      await loadBackupFiles();
+    } catch (err) {
+      console.error("Backup failed:", err);
+      statusMessage.textContent = "Backup failed. Please try again.";
+      statusMessage.style.color = "red";
+    }
+  });
+
+  // Snapshot button
+  snapshotButton.addEventListener("click", async () => {
+    try {
+      statusMessage.textContent = "Creating snapshot...";
+      const data = await exportBackupData();
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      await backupToGDrive(data, `snapshot-${timestamp}.json`);
+      statusMessage.textContent = "Snapshot created successfully!";
+      statusMessage.style.color = "green";
+      await loadBackupFiles();
+    } catch (err) {
+      console.error("Snapshot failed:", err);
+      statusMessage.textContent = "Snapshot failed. Please try again.";
+      statusMessage.style.color = "red";
+    }
+  });
+
+  // Download button
+  downloadButton.addEventListener("click", async () => {
+    const selectedFile = backupSelect.value;
+    if (!selectedFile) return;
+
+    try {
+      statusMessage.textContent = "Downloading...";
+      await downloadBackupFile(selectedFile);
+      statusMessage.textContent = "Download completed!";
+      statusMessage.style.color = "green";
+    } catch (err) {
+      console.error("Download failed:", err);
+      statusMessage.textContent = "Download failed. Please try again.";
+      statusMessage.style.color = "red";
+    }
+  });
+
+  // Restore button
+  restoreButton.addEventListener("click", async () => {
+    const selectedFile = backupSelect.value;
+    if (!selectedFile) return;
+
+    if (!confirm("This will overwrite your current data. Are you sure?")) {
+      return;
+    }
+
+    try {
+      statusMessage.textContent = "Restoring...";
+      const data = await importFromGDrive(selectedFile);
+      await importDataToStorage(data);
+      statusMessage.textContent = "Restore completed! Refreshing page...";
+      statusMessage.style.color = "green";
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (err) {
+      console.error("Restore failed:", err);
+      statusMessage.textContent = "Restore failed. Please try again.";
+      statusMessage.style.color = "red";
+    }
+  });
+
+  // Delete button
+  deleteButton.addEventListener("click", async () => {
+    const selectedFile = backupSelect.value;
+    if (!selectedFile) return;
+
+    if (!confirm("Are you sure you want to delete this backup?")) {
+      return;
+    }
+
+    try {
+      statusMessage.textContent = "Deleting...";
+      await deleteBackupFile(selectedFile);
+      statusMessage.textContent = "Delete completed!";
+      statusMessage.style.color = "green";
+      await loadBackupFiles();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      statusMessage.textContent = "Delete failed. Please try again.";
+      statusMessage.style.color = "red";
+    }
+  });
+
+  // Close button
+  closeButton.addEventListener("click", () => {
+    modalPopup.remove();
+  });
+
+  // Initial load
+  checkAuthStatus();
+}
