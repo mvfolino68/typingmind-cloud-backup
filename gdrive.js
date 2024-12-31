@@ -579,3 +579,210 @@ function updateAuthStatus(isAuthenticated) {
     statusMessage.style.color = "orange";
   }
 }
+
+// Utility functions
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
+// Load required libraries
+async function loadDexie() {
+  if (typeof Dexie !== 'undefined') return;
+  await new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/dexie@latest/dist/dexie.js";
+    script.onload = resolve;
+    document.head.appendChild(script);
+  });
+}
+
+async function loadJSZip() {
+  if (typeof JSZip !== 'undefined') return;
+  await new Promise((resolve) => {
+    const script = document.createElement("script");
+    script.src =
+      "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.6.0/jszip.min.js";
+    script.onload = resolve;
+    document.head.appendChild(script);
+  });
+}
+
+// Data operations
+async function exportBackupData() {
+  const db = new Dexie("typingmind");
+  db.version(1).stores({
+    conversations: "++id",
+    messages: "++id,conversationId",
+    settings: "id",
+  });
+
+  const conversations = await db.conversations.toArray();
+  const messages = await db.messages.toArray();
+  const settings = await db.settings.toArray();
+  const localStorageData = { ...localStorage };
+
+  return {
+    conversations,
+    messages,
+    settings,
+    localStorage: localStorageData,
+    version: 1,
+  };
+}
+
+async function importDataToStorage(data) {
+  // Clear existing data
+  localStorage.clear();
+  const db = new Dexie("typingmind");
+  await db.delete();
+  
+  // Create new database
+  db.version(1).stores({
+    conversations: "++id",
+    messages: "++id,conversationId",
+    settings: "id",
+  });
+
+  // Restore localStorage data
+  for (const [key, value] of Object.entries(data.localStorage)) {
+    localStorage.setItem(key, value);
+  }
+
+  // Restore IndexedDB data
+  try {
+    if (data.conversations && data.conversations.length > 0) {
+      await db.conversations.bulkPut(data.conversations);
+    }
+    if (data.messages && data.messages.length > 0) {
+      await db.messages.bulkPut(data.messages);
+    }
+    if (data.settings && data.settings.length > 0) {
+      await db.settings.bulkPut(data.settings);
+    }
+  } catch (err) {
+    console.error("Error importing data:", err);
+    throw err;
+  }
+}
+
+async function setupStorageMonitoring() {
+  const db = new Dexie("typingmind");
+  db.version(1).stores({
+    conversations: "++id",
+    messages: "++id,conversationId",
+    settings: "id",
+  });
+
+  const debounceBackup = debounce(async () => {
+    if (!document.hidden) {
+      const data = await exportBackupData();
+      await backupToGDrive(data);
+      const currentTime = new Date().toLocaleString();
+      localStorage.setItem("last-cloud-sync", currentTime);
+
+      var element = document.getElementById("last-sync-msg");
+      if (element !== null) {
+        element.innerText = `Last sync done at ${currentTime}`;
+      }
+    }
+  }, 1000);
+
+  // Monitor for changes
+  db.conversations.hook("creating", debounceBackup);
+  db.conversations.hook("updating", debounceBackup);
+  db.conversations.hook("deleting", debounceBackup);
+  db.messages.hook("creating", debounceBackup);
+  db.messages.hook("updating", debounceBackup);
+  db.messages.hook("deleting", debounceBackup);
+  db.settings.hook("creating", debounceBackup);
+  db.settings.hook("updating", debounceBackup);
+  db.settings.hook("deleting", debounceBackup);
+}
+
+async function startBackupInterval() {
+  if (!backupIntervalRunning) {
+    backupIntervalRunning = true;
+    setInterval(async () => {
+      if (!document.hidden) {
+        const data = await exportBackupData();
+        await backupToGDrive(data);
+      }
+    }, 60000); // Backup every minute when tab is active
+  }
+}
+
+// Handle visibility change
+document.addEventListener("visibilitychange", async () => {
+  if (!document.hidden) {
+    var importSuccessful = await checkAndImportBackup();
+    const storedSuffix = localStorage.getItem("last-daily-backup-in-gdrive");
+    const today = new Date();
+    const currentDateSuffix = `${today.getFullYear()}${String(
+      today.getMonth() + 1
+    ).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+    const currentTime = new Date().toLocaleString();
+    const lastSync = localStorage.getItem("last-cloud-sync");
+    var element = document.getElementById("last-sync-msg");
+
+    if (lastSync && importSuccessful) {
+      if (element !== null) {
+        element.innerText = `Last sync done at ${currentTime}`;
+        element = null;
+      }
+      if (!storedSuffix || currentDateSuffix > storedSuffix) {
+        await handleBackupFiles();
+      }
+      startBackupInterval();
+      setupStorageMonitoring();
+    } else if (!backupIntervalRunning) {
+      startBackupInterval();
+      setupStorageMonitoring();
+    }
+  }
+});
+
+async function handleTimeBasedBackup() {
+  try {
+    const data = await exportBackupData();
+    const filename = `${TIME_BACKUP_FILE_PREFIX}-backup.json`;
+
+    // Create or update time-based backup
+    await backupToGDrive(data, filename);
+
+    console.log("Time-based backup completed successfully");
+  } catch (err) {
+    console.error("Error in time-based backup:", err);
+  }
+}
+
+async function handleBackupFiles() {
+  try {
+    const data = await exportBackupData();
+    const today = new Date();
+    const dateSuffix = `${today.getFullYear()}${String(
+      today.getMonth() + 1
+    ).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+    const filename = `backup-${dateSuffix}.zip`;
+
+    // Create daily backup
+    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+    const zip = new JSZip();
+    zip.file("backup.json", blob);
+    const zippedData = await zip.generateAsync({ type: "blob" });
+
+    await backupToGDrive(zippedData, filename);
+
+    localStorage.setItem("last-daily-backup-in-gdrive", dateSuffix);
+    console.log("Daily backup completed successfully");
+  } catch (err) {
+    console.error("Error in daily backup:", err);
+  }
+}
