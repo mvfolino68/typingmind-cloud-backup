@@ -370,3 +370,212 @@ function openSyncModal() {
   // Initial load
   checkAuthStatus();
 }
+
+async function loadBackupFiles() {
+  const select = document.getElementById("backup-files");
+  const refreshButton = document.getElementById("refresh-backups-btn");
+  const actionButtons = document.querySelectorAll(
+    "#backup-now-btn, #snapshot-btn, #download-backup-btn, #restore-backup-btn, #delete-backup-btn"
+  );
+
+  try {
+    refreshButton.disabled = true;
+    select.innerHTML = '<option value="">Loading backups...</option>';
+
+    const response = await gapi.client.drive.files.list({
+      q: `'${backupFolderId}' in parents and trashed=false`,
+      spaces: "drive",
+      fields: "files(id, name, modifiedTime)",
+      orderBy: "modifiedTime desc",
+    });
+
+    const files = response.result.files;
+    select.innerHTML = files.length
+      ? ""
+      : '<option value="">No backups found</option>';
+
+    files.forEach((file) => {
+      const option = document.createElement("option");
+      option.value = file.name;
+      const date = new Date(file.modifiedTime).toLocaleString();
+      option.text = `${file.name} (${date})`;
+      select.appendChild(option);
+    });
+
+    actionButtons.forEach((button) => (button.disabled = false));
+  } catch (err) {
+    console.error("Error loading backup files:", err);
+    select.innerHTML = '<option value="">Error loading backups</option>';
+  } finally {
+    refreshButton.disabled = false;
+  }
+}
+
+async function backupToGDrive(data, customFilename = null) {
+  try {
+    const filename = customFilename || `backup.json`;
+    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+
+    // Check if file already exists
+    const response = await gapi.client.drive.files.list({
+      q: `name='${filename}' and '${backupFolderId}' in parents and trashed=false`,
+      spaces: "drive",
+      fields: "files(id)",
+    });
+
+    const existingFiles = response.result.files;
+    
+    if (existingFiles.length > 0) {
+      // Update existing file
+      const fileId = existingFiles[0].id;
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify({
+        name: filename,
+      })], { type: 'application/json' }));
+      form.append('file', blob);
+
+      await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart`, {
+        method: 'PATCH',
+        headers: new Headers({ 'Authorization': 'Bearer ' + gapi.client.getToken().access_token }),
+        body: form
+      });
+    } else {
+      // Create new file
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify({
+        name: filename,
+        parents: [backupFolderId]
+      })], { type: 'application/json' }));
+      form.append('file', blob);
+
+      await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: new Headers({ 'Authorization': 'Bearer ' + gapi.client.getToken().access_token }),
+        body: form
+      });
+    }
+
+    const currentTime = new Date().toLocaleString();
+    localStorage.setItem("last-cloud-sync", currentTime);
+    var element = document.getElementById("last-sync-msg");
+    if (element !== null) {
+      element.innerText = `Last sync done at ${currentTime}`;
+    }
+  } catch (err) {
+    console.error("Error in backupToGDrive:", err);
+    throw err;
+  }
+}
+
+async function importFromGDrive(filename) {
+  try {
+    // Find the file
+    const response = await gapi.client.drive.files.list({
+      q: `name='${filename}' and '${backupFolderId}' in parents and trashed=false`,
+      spaces: "drive",
+      fields: "files(id)",
+    });
+
+    if (response.result.files.length === 0) {
+      throw new Error("Backup file not found");
+    }
+
+    const fileId = response.result.files[0].id;
+    
+    // Download the file
+    const result = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+      headers: new Headers({ 'Authorization': 'Bearer ' + gapi.client.getToken().access_token })
+    });
+
+    if (!result.ok) {
+      throw new Error("Failed to download backup file");
+    }
+
+    const data = await result.json();
+    return data;
+  } catch (err) {
+    console.error("Error in importFromGDrive:", err);
+    throw err;
+  }
+}
+
+async function downloadBackupFile(filename) {
+  try {
+    const data = await importFromGDrive(filename);
+    const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error("Error in downloadBackupFile:", err);
+    throw err;
+  }
+}
+
+async function deleteBackupFile(filename) {
+  try {
+    const response = await gapi.client.drive.files.list({
+      q: `name='${filename}' and '${backupFolderId}' in parents and trashed=false`,
+      spaces: "drive",
+      fields: "files(id)",
+    });
+
+    if (response.result.files.length === 0) {
+      throw new Error("Backup file not found");
+    }
+
+    const fileId = response.result.files[0].id;
+    await gapi.client.drive.files.delete({
+      fileId: fileId
+    });
+  } catch (err) {
+    console.error("Error in deleteBackupFile:", err);
+    throw err;
+  }
+}
+
+async function checkAuthStatus() {
+  const authButton = document.getElementById("auth-button");
+  const statusMessage = document.getElementById("status-message");
+  const actionButtons = document.querySelectorAll(
+    "#backup-now-btn, #snapshot-btn, #download-backup-btn, #restore-backup-btn, #delete-backup-btn"
+  );
+
+  try {
+    const token = gapi.client.getToken();
+    if (token) {
+      updateAuthStatus(true);
+      await loadBackupFiles();
+    } else {
+      updateAuthStatus(false);
+      actionButtons.forEach((button) => (button.disabled = true));
+    }
+  } catch (err) {
+    console.error("Error checking auth status:", err);
+    statusMessage.textContent = "Error checking authentication status";
+    statusMessage.style.color = "red";
+    actionButtons.forEach((button) => (button.disabled = true));
+  }
+}
+
+function updateAuthStatus(isAuthenticated) {
+  const authButton = document.getElementById("auth-button");
+  const statusMessage = document.getElementById("status-message");
+
+  if (isAuthenticated) {
+    authButton.textContent = "Connected to Google Drive";
+    authButton.disabled = true;
+    authButton.classList.add("bg-green-600");
+    statusMessage.textContent = "Ready to backup";
+    statusMessage.style.color = "green";
+  } else {
+    authButton.textContent = "Connect to Google Drive";
+    authButton.disabled = false;
+    authButton.classList.remove("bg-green-600");
+    statusMessage.textContent = "Please connect to Google Drive";
+    statusMessage.style.color = "orange";
+  }
+}
