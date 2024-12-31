@@ -309,18 +309,18 @@ function createBackupButton() {
   return cloudSyncBtn;
 }
 
-// Start watching for Teams button immediately
-const observer = new MutationObserver((mutations) => {
-  const teamsButton = document.querySelector(
-    '[data-element-id="workspace-tab-teams"]'
-  );
+// // Start watching for Teams button immediately
+// const observer = new MutationObserver((mutations) => {
+//   const teamsButton = document.querySelector(
+//     '[data-element-id="workspace-tab-teams"]'
+//   );
 
-  if (teamsButton && teamsButton.parentNode && !document.querySelector('[data-element-id="cloud-sync-button"]')) {
-    const cloudSyncBtn = createBackupButton();
-    teamsButton.parentNode.insertBefore(cloudSyncBtn, teamsButton.nextSibling);
-    console.log("Backup button inserted successfully");
-  }
-});
+//   if (teamsButton && teamsButton.parentNode && !document.querySelector('[data-element-id="cloud-sync-button"]')) {
+//     const cloudSyncBtn = createBackupButton();
+//     teamsButton.parentNode.insertBefore(cloudSyncBtn, teamsButton.nextSibling);
+//     console.log("Backup button inserted successfully");
+//   }
+// });
 
 observer.observe(document.body, {
   childList: true,
@@ -772,3 +772,4 @@ document.addEventListener("visibilitychange", async () => {
       setupStorageMonitoring();
     }
   }
+});
