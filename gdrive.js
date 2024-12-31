@@ -786,3 +786,73 @@ async function handleBackupFiles() {
     console.error("Error in daily backup:", err);
   }
 }
+
+// Function to check for backup file and import it
+async function checkAndImportBackup() {
+  try {
+    // Check if we're authenticated
+    const token = gapi.client.getToken();
+    if (!token) {
+      console.log("Not authenticated with Google Drive yet");
+      return false;
+    }
+
+    // Check if backup folder exists
+    if (!backupFolderId) {
+      console.log("Backup folder not set up yet");
+      return false;
+    }
+
+    // Look for the main backup file
+    const response = await gapi.client.drive.files.list({
+      q: `name='backup.json' and '${backupFolderId}' in parents and trashed=false`,
+      spaces: "drive",
+      fields: "files(id, modifiedTime)",
+    });
+
+    if (response.result.files.length === 0) {
+      console.log("No backup file found in Google Drive");
+      return false;
+    }
+
+    // Get the most recent backup
+    const mostRecentBackup = response.result.files.sort((a, b) => 
+      new Date(b.modifiedTime) - new Date(a.modifiedTime)
+    )[0];
+
+    // Check if we need to restore
+    const lastSync = localStorage.getItem("last-cloud-sync");
+    if (lastSync) {
+      const lastSyncTime = new Date(lastSync);
+      const backupTime = new Date(mostRecentBackup.modifiedTime);
+      
+      if (lastSyncTime >= backupTime) {
+        console.log("Local data is up to date");
+        return true;
+      }
+    }
+
+    // Import the backup
+    console.log("Importing backup from Google Drive...");
+    const data = await importFromGDrive("backup.json");
+    await importDataToStorage(data);
+    wasImportSuccessful = true;
+
+    const currentTime = new Date().toLocaleString();
+    localStorage.setItem("last-cloud-sync", currentTime);
+    var element = document.getElementById("last-sync-msg");
+    if (element !== null) {
+      element.innerText = `Last sync done at ${currentTime}`;
+    }
+
+    console.log("Backup imported successfully");
+    return true;
+
+  } catch (err) {
+    console.error("Error checking/importing backup:", err);
+    if (err.status === 401) {
+      console.log("Authentication expired, need to re-authenticate");
+    }
+    return false;
+  }
+}
