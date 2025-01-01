@@ -868,7 +868,7 @@ async function checkAndImportBackup() {
 async function loadGoogleAuth() {
     return new Promise((resolve, reject) => {
       // Check if gapi is already defined
-      if (typeof gapi !== 'undefined') {
+      if (typeof gapi !== "undefined") {
         resolve();
         return;
       }
@@ -879,11 +879,11 @@ async function loadGoogleAuth() {
       gapiScript.onload = async () => {
         // Wait for gapi to be fully loaded
         await new Promise((resolveGapi) => {
-          if (typeof gapi !== 'undefined') {
+          if (typeof gapi !== "undefined") {
             resolveGapi();
           } else {
             const intervalId = setInterval(() => {
-              if (typeof gapi !== 'undefined') {
+              if (typeof gapi !== "undefined") {
                 clearInterval(intervalId);
                 resolveGapi();
               }
@@ -901,14 +901,15 @@ async function loadGoogleAuth() {
           const gisScript = document.createElement("script");
           gisScript.src = "https://accounts.google.com/gsi/client";
           gisScript.onload = () => {
-            tokenClient = google.accounts.oauth2.initTokenClient({
+            // Ensure tokenClient is initialized before resolving
+            window.tokenClient = google.accounts.oauth2.initTokenClient({
               client_id: CLIENT_ID,
               scope: SCOPES,
-              callback: (tokenResponse) => {
+              callback: async (tokenResponse) => {
                 if (tokenResponse && tokenResponse.access_token) {
                   gapi.client.setToken(tokenResponse);
                   updateAuthStatus(true);
-                  loadBackupFiles();
+                  await loadBackupFiles();
                 } else {
                   updateAuthStatus(false);
                 }
@@ -922,6 +923,34 @@ async function loadGoogleAuth() {
       };
       gapiScript.onerror = reject;
       document.head.appendChild(gapiScript);
+    });
+  }
+  
+  async function authenticate() {
+    return new Promise((resolve, reject) => {
+      if (!window.tokenClient) {
+        reject("tokenClient is not initialized");
+        return;
+      }
+      window.tokenClient.callback = async (resp) => {
+        if (resp.error !== undefined) {
+          reject(resp);
+        }
+        console.log(
+          "gapi.client access token: " + JSON.stringify(gapi.client.getToken())
+        );
+        resolve(resp);
+      };
+  
+      // Conditionally request access token
+      if (gapi.client.getToken() === null) {
+        // Prompt the user to select a Google Account and ask for consent to share their data
+        // when establishing a new session.
+        window.tokenClient.requestAccessToken({ prompt: "consent" });
+      } else {
+        // Skip display of account chooser and consent dialog for an existing session.
+        window.tokenClient.requestAccessToken({ prompt: "" });
+      }
     });
   }  
   
