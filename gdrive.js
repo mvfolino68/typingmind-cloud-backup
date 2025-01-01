@@ -30,51 +30,49 @@ const SCOPES = "https://www.googleapis.com/auth/drive.file";
 })();
 
 async function handleDOMReady() {
-  window.removeEventListener("load", handleDOMReady);
-  try {
-    // Load all required libraries first
-    console.log("Loading required libraries...");
-    await Promise.all([loadDexie(), loadJSZip()]);
-    
-    // Load Google auth separately since it requires sequential steps
-    console.log("Loading Google Auth...");
-    await loadGoogleAuth();
-    
-    console.log("Setting up backup folder...");
-    await setupBackupFolder();
-    
-    console.log("Checking for existing backups...");
-    var importSuccessful = await checkAndImportBackup();
-    
-    const storedSuffix = localStorage.getItem("last-daily-backup-in-gdrive");
-    const today = new Date();
-    const currentDateSuffix = `${today.getFullYear()}${String(
-      today.getMonth() + 1
-    ).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
-    const currentTime = new Date().toLocaleString();
-    const lastSync = localStorage.getItem("last-cloud-sync");
-    var element = document.getElementById("last-sync-msg");
-
-    if (lastSync && importSuccessful) {
-      if (element !== null) {
-        element.innerText = `Last sync done at ${currentTime}`;
-        element = null;
+    window.removeEventListener("load", handleDOMReady);
+    try {
+      // Load all required libraries first
+      console.log("Loading required libraries...");
+      await Promise.all([loadDexie(), loadJSZip()]);
+      
+      // Load Google auth separately since it requires sequential steps
+      console.log("Loading Google Auth...");
+      await loadGoogleAuth();
+  
+      console.log("Checking for existing backups...");
+      var importSuccessful = await checkAndImportBackup();
+      
+      const storedSuffix = localStorage.getItem("last-daily-backup-in-gdrive");
+      const today = new Date();
+      const currentDateSuffix = `${today.getFullYear()}${String(
+        today.getMonth() + 1
+      ).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+      const currentTime = new Date().toLocaleString();
+      const lastSync = localStorage.getItem("last-cloud-sync");
+      var element = document.getElementById("last-sync-msg");
+  
+      if (lastSync && importSuccessful) {
+        if (element !== null) {
+          element.innerText = `Last sync done at ${currentTime}`;
+          element = null;
+        }
+        if (!storedSuffix || currentDateSuffix > storedSuffix) {
+          await handleBackupFiles();
+        }
+        startBackupInterval();
+        setupStorageMonitoring();
+      } else if (!backupIntervalRunning) {
+        startBackupInterval();
+        setupStorageMonitoring();
       }
-      if (!storedSuffix || currentDateSuffix > storedSuffix) {
-        await handleBackupFiles();
-      }
-      startBackupInterval();
-      setupStorageMonitoring();
-    } else if (!backupIntervalRunning) {
-      startBackupInterval();
-      setupStorageMonitoring();
+      
+      console.log("Google Drive backup extension initialized successfully!");
+    } catch (err) {
+      console.error("Error in handleDOMReady:", err);
     }
-    
-    console.log("Google Drive backup extension initialized successfully!");
-  } catch (err) {
-    console.error("Error in handleDOMReady:", err);
   }
-}
+  
 
 // Create a new button
 const cloudSyncBtn = document.createElement("button");
@@ -538,28 +536,38 @@ async function deleteBackupFile(filename) {
 }
 
 async function checkAuthStatus() {
-  const authButton = document.getElementById("auth-button");
-  const statusMessage = document.getElementById("status-message");
-  const actionButtons = document.querySelectorAll(
-    "#backup-now-btn, #snapshot-btn, #download-backup-btn, #restore-backup-btn, #delete-backup-btn"
-  );
-
-  try {
-    const token = gapi.client.getToken();
-    if (token) {
-      updateAuthStatus(true);
-      await loadBackupFiles();
-    } else {
-      updateAuthStatus(false);
+    const authButton = document.getElementById("auth-button");
+    const statusMessage = document.getElementById("status-message");
+    const actionButtons = document.querySelectorAll(
+      "#backup-now-btn, #snapshot-btn, #download-backup-btn, #restore-backup-btn, #delete-backup-btn"
+    );
+  
+    try {
+      // Check if gapi and gapi.client are available
+      if (typeof gapi !== 'undefined' && typeof gapi.client !== 'undefined') {
+        const token = gapi.client.getToken();
+        if (token) {
+          // Token exists, user is authenticated
+          updateAuthStatus(true);
+          await loadBackupFiles();
+        } else {
+          // No token, user is not authenticated
+          updateAuthStatus(false);
+          actionButtons.forEach((button) => (button.disabled = true));
+        }
+      } else {
+        // gapi or gapi.client not yet loaded, handle accordingly
+        console.log("Google API client not loaded yet.");
+        updateAuthStatus(false); // or handle differently based on your logic
+        actionButtons.forEach((button) => (button.disabled = true));
+      }
+    } catch (err) {
+      console.error("Error checking auth status:", err);
+      statusMessage.textContent = "Error checking authentication status";
+      statusMessage.style.color = "red";
       actionButtons.forEach((button) => (button.disabled = true));
     }
-  } catch (err) {
-    console.error("Error checking auth status:", err);
-    statusMessage.textContent = "Error checking authentication status";
-    statusMessage.style.color = "red";
-    actionButtons.forEach((button) => (button.disabled = true));
-  }
-}
+  }  
 
 function updateAuthStatus(isAuthenticated) {
   const authButton = document.getElementById("auth-button");
@@ -856,3 +864,99 @@ async function checkAndImportBackup() {
     return false;
   }
 }
+
+async function loadGoogleAuth() {
+    return new Promise((resolve, reject) => {
+      // Load the Google API (gapi) library
+      const gapiScript = document.createElement("script");
+      gapiScript.src = "https://apis.google.com/js/api.js";
+      gapiScript.onload = () => {
+        gapi.load("client", async () => {
+          // Initialize gapi.client with the discovery doc
+          await gapi.client.init({
+            discoveryDocs: [DISCOVERY_DOC],
+          });
+  
+          // Load the Google Identity Services (gis) library
+          const gisScript = document.createElement("script");
+          gisScript.src = "https://accounts.google.com/gsi/client";
+          gisScript.onload = () => {
+              tokenClient = google.accounts.oauth2.initTokenClient({
+              client_id: CLIENT_ID,
+              scope: SCOPES,
+              callback: (tokenResponse) => {
+                if (tokenResponse && tokenResponse.access_token) {
+                  gapi.client.setToken(tokenResponse);
+                  updateAuthStatus(true);
+                  loadBackupFiles();
+                } else {
+                  updateAuthStatus(false);
+                }
+              },
+            });
+            resolve();
+          };
+          gisScript.onerror = reject;
+          document.head.appendChild(gisScript);
+        });
+      };
+      gapiScript.onerror = reject;
+      document.head.appendChild(gapiScript);
+    });
+  }
+
+  async function authenticate() {
+    return new Promise((resolve, reject) => {
+      tokenClient.callback = async (resp) => {
+        if (resp.error !== undefined) {
+          reject(resp);
+        }
+        console.log("gapi.client access token: " + JSON.stringify(gapi.client.getToken()));
+        resolve(resp);
+      };
+  
+      // Conditionally request access token
+      if (gapi.client.getToken() === null) {
+        // Prompt the user to select a Google Account and ask for consent to share their data
+        // when establishing a new session.
+        tokenClient.requestAccessToken({prompt: 'consent'});
+      } else {
+        // Skip display of account chooser and consent dialog for an existing session.
+        tokenClient.requestAccessToken({prompt: ''});
+      }
+    });
+  }
+  
+  async function setupBackupFolder() {
+    try {
+      // Check if the backup folder already exists
+      const response = await gapi.client.drive.files.list({
+        q: `name = '${BACKUP_FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+        spaces: 'drive',
+        fields: 'files(id, name)',
+      });
+  
+      const files = response.result.files;
+      if (files && files.length > 0) {
+        // Backup folder already exists, use its ID
+        backupFolderId = files[0].id;
+        console.log(`Backup folder found with ID: ${backupFolderId}`);
+      } else {
+        // Backup folder does not exist, create it
+        const folderMetadata = {
+          name: BACKUP_FOLDER_NAME,
+          mimeType: 'application/vnd.google-apps.folder',
+        };
+        const folderResponse = await gapi.client.drive.files.create({
+          resource: folderMetadata,
+          fields: 'id',
+        });
+        backupFolderId = folderResponse.result.id;
+        console.log(`Backup folder created with ID: ${backupFolderId}`);
+      }
+    } catch (err) {
+      console.error('Error setting up backup folder:', err);
+      throw err;
+    }
+  }
+  
